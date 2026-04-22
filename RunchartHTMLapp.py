@@ -11,11 +11,11 @@ NUM_POINTS = 18
 ASTRO_THRESHOLD = 10
 
 st.set_page_config(
-    page_title="RunChart HTML Generator",
+    page_title="RunChart HTML Report Generator",
     layout="wide"
 )
 
-st.title("📊 RunChart HTML Report Generator (Premium)")
+st.title("📊 RunChart HTML Report Generator (Fixed Version)")
 
 # -----------------------------
 # HELPERS
@@ -35,8 +35,8 @@ def median_line(values):
 def detect_shift(values, center):
     if np.isnan(center):
         return []
-    flags = []
 
+    flags = []
     for v in values:
         if pd.isna(v):
             flags.append(0)
@@ -49,7 +49,7 @@ def detect_shift(values, center):
     run = 1
 
     for i in range(1, len(flags)):
-        if flags[i] == flags[i - 1]:
+        if flags[i] == flags[i - 1] and flags[i] != 0:
             run += 1
         else:
             if run >= 6:
@@ -135,23 +135,43 @@ if uploaded_file:
 
     df = pd.read_excel(uploaded_file)
 
-    st.success("File Loaded Successfully")
+    # CLEAN CRITICAL ISSUE (FIX FOR SORT ERROR)
+    df = df.replace([np.inf, -np.inf], np.nan)
 
+    st.success("File Loaded Successfully")
+    st.dataframe(df.head())
+
+    # -----------------------------
+    # SAFE COLUMN SELECTION
+    # -----------------------------
     dept_col = st.selectbox("Select Department Column", df.columns)
     ind_col = st.selectbox("Select Indicator Column", df.columns)
 
-    data_cols = [c for c in df.columns if c not in [dept_col, ind_col]]
-
-    departments = sorted(df[dept_col].dropna().astype(str).unique())
+    # SAFE DEPARTMENT LIST (FIXED ERROR)
+    departments = sorted(
+        set(
+            str(x).strip()
+            for x in df[dept_col].dropna().tolist()
+        )
+    )
 
     selected_dept = st.selectbox("Select Department", ["ALL"] + departments)
 
+    data_cols = [c for c in df.columns if c not in [dept_col, ind_col]]
+
+    # -----------------------------
+    # GENERATE REPORT
+    # -----------------------------
     if st.button("Generate HTML Report"):
 
         filtered = df.copy()
 
+        filtered[dept_col] = filtered[dept_col].astype(str).str.strip()
+
         if selected_dept != "ALL":
-            filtered = filtered[filtered[dept_col].astype(str) == selected_dept]
+            filtered = filtered[
+                filtered[dept_col] == str(selected_dept)
+            ]
 
         html = """
         <html>
@@ -164,14 +184,14 @@ if uploaded_file:
         </style>
         </head>
         <body>
-        <h1>📊 RunChart Quality Report</h1>
+        <h1>📊 RunChart HTML Quality Report</h1>
         """
 
-        for dept in sorted(filtered[dept_col].astype(str).unique()):
+        for dept in sorted(set(filtered[dept_col])):
 
             html += f"<div class='dept'><h2>Department: {dept}</h2></div>"
 
-            dept_df = filtered[filtered[dept_col].astype(str) == dept]
+            dept_df = filtered[filtered[dept_col] == dept]
 
             for _, row in dept_df.iterrows():
 
@@ -208,11 +228,11 @@ if uploaded_file:
         """
 
         st.download_button(
-            label="⬇ Download HTML Report",
+            "⬇ Download HTML Report",
             data=html,
             file_name="RunChart_Report.html",
             mime="text/html"
         )
 
 else:
-    st.info("Upload Excel file to start")
+    st.info("Upload Excel file to start generating report")

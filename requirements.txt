@@ -1,9 +1,5 @@
-```txt
 streamlit
 pandas
 numpy
 plotly
 openpyxl
-xlsxwriter
-python-dateutil
-```

@@ -1,238 +1,219 @@
+# runcharts_streamlit_premium.py
+# UPGRADED VERSION: Department buttons + filtered indicators + PPTX highlights (shift/trend/astro circles)
+
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.chart.data import CategoryChartData
+from pptx.enum.chart import XL_CHART_TYPE
+from pptx.dml.color import RGBColor
+from pptx.enum.dml import MSO_LINE_DASH_STYLE
+from pptx.enum.shapes import MSO_SHAPE
 import re
+import io
+import os
+from datetime import datetime
 
-# -----------------------------
+# ---------------------------
 # CONFIG
-# -----------------------------
+# ---------------------------
 NUM_POINTS = 18
+CENTER_LINE_METHOD = "median"
 ASTRO_THRESHOLD = 10
 
-st.set_page_config(
-    page_title="RunChart HTML Report Generator",
-    layout="wide"
-)
+TITLE_BOX = (0.6, 0.4, 9.0, 0.9)
+CHART_BOX = (0.6, 1.4, 9.0, 4.3)
+NOTES_BOX = (0.6, 6.0, 9.0, 1.3)
 
-st.title("📊 RunChart HTML Report Generator (Fixed Version)")
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# -----------------------------
+# ---------------------------
 # HELPERS
-# -----------------------------
-def clean(val):
-    if pd.isna(val):
-        return ""
-    return str(val).strip()
+# ---------------------------
+def clean_text(val):
+    if pd.isna(val): return ""
+    return str(val).strip().lower()
 
-def median_line(values):
+
+def get_center(values):
     arr = np.array(values, dtype=float)
     arr = arr[~np.isnan(arr)]
-    if len(arr) == 0:
-        return np.nan
-    return np.median(arr)
+    return float(np.nanmedian(arr)) if len(arr) else np.nan
 
-def detect_shift(values, center):
-    if np.isnan(center):
-        return []
 
+def detect_shift(series, center):
     flags = []
-    for v in values:
-        if pd.isna(v):
-            flags.append(0)
-        elif v > center:
-            flags.append(1)
+    for v in series:
+        if pd.isna(v): flags.append(0)
+        elif v > center: flags.append(1)
+        elif v < center: flags.append(-1)
+        else: flags.append(0)
+
+    runs = []
+    i = 0
+    while i < len(flags):
+        if flags[i] == 0:
+            i += 1
+            continue
+        j = i
+        while j < len(flags) and flags[j] == flags[i]:
+            j += 1
+        if j - i >= 5:  # 5 consecutive = shift zone
+            runs.append((i, j-1, flags[i]))
+        i = j
+    return runs
+
+
+def detect_trend(series):
+    runs = []
+    i = 0
+    while i < len(series)-1:
+        if pd.isna(series[i]):
+            i += 1
+            continue
+        direction = None
+        if series[i+1] > series[i]: direction = 1
+        elif series[i+1] < series[i]: direction = -1
         else:
-            flags.append(-1)
-
-    shifts = []
-    run = 1
-
-    for i in range(1, len(flags)):
-        if flags[i] == flags[i - 1] and flags[i] != 0:
-            run += 1
-        else:
-            if run >= 6:
-                shifts.append(i - 1)
-            run = 1
-
-    return shifts
-
-def detect_trend(values):
-    trends = []
-    run = 1
-
-    for i in range(1, len(values)):
-        if pd.isna(values[i]) or pd.isna(values[i - 1]):
+            i += 1
             continue
 
-        if values[i] > values[i - 1]:
-            run += 1
-        else:
-            if run >= 5:
-                trends.append(i - 1)
-            run = 1
+        j = i
+        while j < len(series)-1:
+            if (direction == 1 and series[j+1] > series[j]) or (direction == -1 and series[j+1] < series[j]):
+                j += 1
+            else:
+                break
+        if j - i >= 5:
+            runs.append((i, j, direction))
+        i = j
+    return runs
 
-    return trends
 
-def detect_astro(values, median):
-    astro = []
-    if np.isnan(median):
-        return astro
+def detect_astro(series, center):
+    return [i for i,v in enumerate(series)
+            if not pd.isna(v) and abs(v-center) >= ASTRO_THRESHOLD]
 
-    for i in range(1, len(values)):
-        if pd.isna(values[i]) or pd.isna(values[i - 1]):
-            continue
 
-        if abs(values[i] - median) >= ASTRO_THRESHOLD and abs(values[i] - values[i - 1]) >= ASTRO_THRESHOLD:
-            astro.append(i)
+def x_position(i):
+    x0, _, w, _ = CHART_BOX
+    step = w / NUM_POINTS
+    return x0 + i * step
 
-    return astro
 
-# -----------------------------
-# HTML BUILDER
-# -----------------------------
-def build_chart_html(labels, values, median, title, shift, trend, astro):
+# ---------------------------
+# STREAMLIT
+# ---------------------------
+st.set_page_config(layout="wide")
+st.title("📊 RunCharts Enhanced Dashboard")
 
-    fig = go.Figure()
-
-    fig.add_trace(go.Scatter(
-        x=labels,
-        y=values,
-        mode="lines+markers",
-        name="Value"
-    ))
-
-    if not np.isnan(median):
-        fig.add_trace(go.Scatter(
-            x=labels,
-            y=[median] * len(labels),
-            mode="lines",
-            name="Median",
-            line=dict(dash="dash")
-        ))
-
-    chart_html = fig.to_html(full_html=False, include_plotlyjs="cdn")
-
-    summary = f"""
-    <div style="font-family:Arial; padding:10px; border:1px solid #ddd; margin-bottom:10px;">
-        <h3>{title}</h3>
-        <p><b>Median:</b> {round(median,2) if not np.isnan(median) else 'N/A'}</p>
-        <p><b>Shift Points:</b> {len(shift)}</p>
-        <p><b>Trend Points:</b> {len(trend)}</p>
-        <p><b>Astronomical Points:</b> {len(astro)}</p>
-    </div>
-    """
-
-    return summary + chart_html
-
-# -----------------------------
-# FILE UPLOAD
-# -----------------------------
-uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx", "xls"])
+uploaded_file = st.file_uploader("Upload Excel", type=["xlsx"])
 
 if uploaded_file:
 
-    df = pd.read_excel(uploaded_file)
+    path = os.path.join(UPLOAD_DIR, uploaded_file.name)
+    with open(path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
 
-    # CLEAN CRITICAL ISSUE (FIX FOR SORT ERROR)
+    xl = pd.ExcelFile(path)
+
+    sheet = st.selectbox("Select Sheet", xl.sheet_names)
+    header = st.number_input("Header Row", 1, 10, 1)
+
+    df = pd.read_excel(path, sheet_name=sheet, header=header-1)
     df = df.replace([np.inf, -np.inf], np.nan)
 
-    st.success("File Loaded Successfully")
-    st.dataframe(df.head())
+    dept_col = st.selectbox("Department Column", df.columns)
+    ind_col = st.selectbox("Indicator Column", df.columns)
 
-    # -----------------------------
-    # SAFE COLUMN SELECTION
-    # -----------------------------
-    dept_col = st.selectbox("Select Department Column", df.columns)
-    ind_col = st.selectbox("Select Indicator Column", df.columns)
+    # ---------------------------
+    # DEPARTMENT BUTTONS
+    # ---------------------------
+    st.subheader("Departments")
+    depts = df[dept_col].dropna().unique()
 
-    # SAFE DEPARTMENT LIST (FIXED ERROR)
-    departments = sorted(
-        set(
-            str(x).strip()
-            for x in df[dept_col].dropna().tolist()
-        )
-    )
+    if "selected_dept" not in st.session_state:
+        st.session_state.selected_dept = None
 
-    selected_dept = st.selectbox("Select Department", ["ALL"] + departments)
+    cols = st.columns(4)
+    for i,d in enumerate(depts):
+        if cols[i%4].button(str(d)):
+            st.session_state.selected_dept = d
 
-    data_cols = [c for c in df.columns if c not in [dept_col, ind_col]]
+    if st.session_state.selected_dept:
+        st.success(f"Selected: {st.session_state.selected_dept}")
 
-    # -----------------------------
-    # GENERATE REPORT
-    # -----------------------------
-    if st.button("Generate HTML Report"):
+        df_d = df[df[dept_col] == st.session_state.selected_dept]
 
-        filtered = df.copy()
+        ppt = Presentation()
 
-        filtered[dept_col] = filtered[dept_col].astype(str).str.strip()
+        for _, row in df_d.iterrows():
 
-        if selected_dept != "ALL":
-            filtered = filtered[
-                filtered[dept_col] == str(selected_dept)
-            ]
+            labels = df.columns[-NUM_POINTS:]
+            series = [row[c] for c in labels]
 
-        html = """
-        <html>
-        <head>
-        <title>RunChart Report</title>
-        <style>
-            body {font-family: Arial; margin: 20px; background:#f8fafc;}
-            .dept {background:#e2e8f0; padding:10px; margin-top:20px;}
-            .indicator {margin-bottom:40px;}
-        </style>
-        </head>
-        <body>
-        <h1>📊 RunChart HTML Quality Report</h1>
-        """
+            center = get_center(series)
 
-        for dept in sorted(set(filtered[dept_col])):
+            shift = detect_shift(series, center)
+            trend = detect_trend(series)
+            astro = detect_astro(series, center)
 
-            html += f"<div class='dept'><h2>Department: {dept}</h2></div>"
+            slide = ppt.slides.add_slide(ppt.slide_layouts[6])
 
-            dept_df = filtered[filtered[dept_col] == dept]
+            # TITLE
+            tx = slide.shapes.add_textbox(Inches(0.6), Inches(0.3), Inches(9), Inches(0.8))
+            tx.text_frame.text = str(row[ind_col])
 
-            for _, row in dept_df.iterrows():
+            # CHART
+            chart_data = CategoryChartData()
+            chart_data.categories = labels.astype(str)
+            chart_data.add_series("Value", series)
 
-                title = clean(row[ind_col]) or "Indicator"
+            chart = slide.shapes.add_chart(
+                XL_CHART_TYPE.LINE_MARKERS,
+                Inches(CHART_BOX[0]), Inches(CHART_BOX[1]), Inches(CHART_BOX[2]), Inches(CHART_BOX[3]),
+                chart_data
+            ).chart
 
-                values = []
-                labels = []
+            # SHIFT CIRCLES
+            for s,e,dirc in shift:
+                x1 = x_position(s)
+                x2 = x_position(e)
+                width = x2 - x1
+                slide.shapes.add_shape(
+                    MSO_SHAPE.OVAL,
+                    Inches(x1), Inches(1.5),
+                    Inches(width), Inches(2)
+                ).line.color.rgb = RGBColor(255, 0, 0)
 
-                for c in data_cols[:NUM_POINTS]:
-                    labels.append(str(c))
-                    values.append(pd.to_numeric(row[c], errors="coerce"))
+            # TREND CIRCLES
+            for s,e,dirc in trend:
+                x1 = x_position(s)
+                x2 = x_position(e)
+                slide.shapes.add_shape(
+                    MSO_SHAPE.OVAL,
+                    Inches(x1), Inches(1.5),
+                    Inches(x2-x1), Inches(2)
+                ).line.color.rgb = RGBColor(0, 128, 0)
 
-                median = median_line(values)
+            # ASTRO POINTS
+            for i in astro:
+                slide.shapes.add_shape(
+                    MSO_SHAPE.OVAL,
+                    Inches(x_position(i)), Inches(2.5),
+                    Inches(0.3), Inches(0.3)
+                ).fill.solid()
 
-                shift = detect_shift(values, median)
-                trend = detect_trend(values)
-                astro = detect_astro(values, median)
+        buf = io.BytesIO()
+        ppt.save(buf)
+        buf.seek(0)
 
-                html += "<div class='indicator'>"
-                html += build_chart_html(
-                    labels,
-                    values,
-                    median,
-                    title,
-                    shift,
-                    trend,
-                    astro
-                )
-                html += "</div>"
-
-        html += """
-        </body>
-        </html>
-        """
-
-        st.download_button(
-            "⬇ Download HTML Report",
-            data=html,
-            file_name="RunChart_Report.html",
-            mime="text/html"
-        )
+        st.download_button("Download PPT", buf, file_name="runcharts.pptx")
 
 else:
-    st.info("Upload Excel file to start generating report")
+    st.info("Upload file")
+
+st.markdown("---\nOMAC Developer")

@@ -2,55 +2,21 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import re
+import io
 
 # -----------------------------
-# PAGE CONFIG
+# CONFIG
 # -----------------------------
+NUM_POINTS = 18
+ASTRO_THRESHOLD = 10
+
 st.set_page_config(
-    page_title="Premium Run Chart Dashboard",
-    page_icon="📊",
+    page_title="RunChart HTML Generator",
     layout="wide"
 )
 
-# -----------------------------
-# PREMIUM UI
-# -----------------------------
-st.markdown("""
-<style>
-body {
-    background-color: #f8fafc;
-}
-
-.department-box {
-    padding: 12px;
-    border-radius: 10px;
-    background: white;
-    margin-bottom: 15px;
-    box-shadow: 0px 2px 8px rgba(0,0,0,0.08);
-}
-
-.indicator-box {
-    padding: 12px;
-    border-radius: 10px;
-    background: #ffffff;
-    margin-bottom: 15px;
-    border-left: 4px solid #2563eb;
-    box-shadow: 0px 2px 6px rgba(0,0,0,0.05);
-}
-
-.footer {
-    position: fixed;
-    bottom: 0;
-    width: 100%;
-    text-align: center;
-    font-size: 12px;
-    padding: 8px;
-    background: white;
-    color: gray;
-    border-top: 1px solid #e5e7eb;
-}
-</style>
-""", unsafe_allow_html=True)
+st.title("📊 RunChart HTML Report Generator")
 
 # -----------------------------
 # HELPERS
@@ -67,124 +33,171 @@ def median_line(values):
         return np.nan
     return np.median(arr)
 
-def pretty(col):
-    return str(col)
+def detect_shift(values, center):
+    flags = []
+    for v in values:
+        if pd.isna(v):
+            flags.append(0)
+        elif v > center:
+            flags.append(1)
+        else:
+            flags.append(-1)
 
-def run_chart(x, y, title, median):
+    shifts = []
+    run = 1
+
+    for i in range(1, len(flags)):
+        if flags[i] == flags[i-1]:
+            run += 1
+        else:
+            if run >= 6:
+                shifts.append(i-1)
+            run = 1
+
+    return shifts
+
+def detect_trend(values):
+    trends = []
+    run = 1
+
+    for i in range(1, len(values)):
+        if pd.isna(values[i]) or pd.isna(values[i-1]):
+            continue
+
+        if values[i] > values[i-1]:
+            run += 1
+        else:
+            if run >= 5:
+                trends.append(i-1)
+            run = 1
+
+    return trends
+
+def detect_astro(values, median):
+    astro = []
+    for i in range(1, len(values)):
+        if pd.isna(values[i]) or pd.isna(values[i-1]):
+            continue
+
+        if abs(values[i] - median) >= ASTRO_THRESHOLD and abs(values[i] - values[i-1]) >= ASTRO_THRESHOLD:
+            astro.append(i)
+
+    return astro
+
+# -----------------------------
+# HTML CHART BUILDER
+# -----------------------------
+def make_chart_html(labels, values, median, title, shift, trend, astro):
     fig = go.Figure()
 
     fig.add_trace(go.Scatter(
-        x=x,
-        y=y,
+        x=labels,
+        y=values,
         mode="lines+markers",
         name="Value"
     ))
 
     fig.add_trace(go.Scatter(
-        x=x,
-        y=[median] * len(x),
+        x=labels,
+        y=[median]*len(labels),
         mode="lines",
         name="Median",
         line=dict(dash="dash")
     ))
 
-    fig.update_layout(
-        title=title,
-        template="plotly_white",
-        height=420,
-        margin=dict(l=20, r=20, t=50, b=20)
-    )
+    html = fig.to_html(full_html=False, include_plotlyjs='cdn')
 
-    return fig
+    notes = f"""
+    <div style="font-family:Arial; padding:10px;">
+        <h3>{title}</h3>
+        <p><b>Median:</b> {median:.2f if not np.isnan(median) else 'N/A'}</p>
+        <p><b>Shift Points:</b> {len(shift)}</p>
+        <p><b>Trend Points:</b> {len(trend)}</p>
+        <p><b>Astronomical Points:</b> {len(astro)}</p>
+    </div>
+    """
+
+    return notes + html
 
 # -----------------------------
-# HEADER
-# -----------------------------
-st.title("🏥 Premium Run Chart Dashboard")
-st.caption("Interactive Quality Indicator Monitoring System")
-
-# -----------------------------
-# UPLOAD FILE
+# FILE UPLOAD
 # -----------------------------
 uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx", "xls"])
 
 if uploaded_file:
 
-    excel = pd.ExcelFile(uploaded_file)
+    df = pd.read_excel(uploaded_file)
 
-    sheet = st.selectbox("Select Sheet", excel.sheet_names)
+    st.success("File Loaded")
 
-    header_row = st.number_input("Header Row Number", 1, value=1)
-
-    df = pd.read_excel(uploaded_file, sheet_name=sheet, header=header_row - 1)
-
-    st.success("File Loaded Successfully")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        dept_col = st.selectbox("Department Column", df.columns)
-
-    with col2:
-        ind_col = st.selectbox("Indicator Column", df.columns)
+    dept_col = st.selectbox("Department Column", df.columns)
+    ind_col = st.selectbox("Indicator Column", df.columns)
 
     data_cols = [c for c in df.columns if c not in [dept_col, ind_col]]
 
     departments = sorted(df[dept_col].dropna().astype(str).unique())
 
-    st.divider()
+    selected = st.selectbox("Select Department", ["ALL"] + departments)
 
-    selected_dept = st.selectbox("Select Department", ["ALL"] + departments)
+    if st.button("Generate HTML Report"):
 
-    if st.button("Generate Dashboard"):
+        html_content = """
+        <html>
+        <head>
+        <title>RunChart Report</title>
+        <style>
+            body {font-family: Arial; margin: 20px;}
+            .dept {padding:10px; background:#f1f5f9; margin-top:20px;}
+            .indicator {margin-bottom:40px;}
+        </style>
+        </head>
+        <body>
+        <h1>RunChart Analysis Report</h1>
+        """
 
-        filtered = df.copy()
+        target = df.copy()
 
-        if selected_dept != "ALL":
-            filtered = filtered[filtered[dept_col].astype(str) == selected_dept]
+        if selected != "ALL":
+            target = target[target[dept_col].astype(str) == selected]
 
-        dept_list = sorted(filtered[dept_col].dropna().astype(str).unique())
+        for dept in sorted(target[dept_col].astype(str).unique()):
 
-        for dept in dept_list:
+            html_content += f"<div class='dept'><h2>{dept}</h2></div>"
 
-            dept_df = filtered[filtered[dept_col].astype(str) == dept]
-
-            st.markdown(f"""
-            <div class="department-box">
-                <h2>{dept}</h2>
-                <p>Total Indicators: {len(dept_df)}</p>
-            </div>
-            """, unsafe_allow_html=True)
+            dept_df = target[target[dept_col].astype(str) == dept]
 
             for _, row in dept_df.iterrows():
 
-                indicator = clean(row[ind_col]) or "Indicator"
+                label = clean(row[ind_col])
 
                 values = []
                 labels = []
 
-                for c in data_cols:
-                    labels.append(pretty(c))
+                for c in data_cols[:NUM_POINTS]:
+                    labels.append(str(c))
                     values.append(pd.to_numeric(row[c], errors="coerce"))
 
                 med = median_line(values)
 
-                st.markdown(f"""
-                <div class="indicator-box">
-                    <h4>{indicator}</h4>
-                    <p><b>Median:</b> {round(med,2) if not pd.isna(med) else "N/A"}</p>
-                </div>
-                """, unsafe_allow_html=True)
+                shift = detect_shift(values, med)
+                trend = detect_trend(values)
+                astro = detect_astro(values, med)
 
-                fig = run_chart(labels, values, indicator, med)
+                html_content += "<div class='indicator'>"
+                html_content += make_chart_html(
+                    labels, values, med,
+                    label, shift, trend, astro
+                )
+                html_content += "</div>"
 
-                st.plotly_chart(fig, use_container_width=True)
+        html_content += "</body></html>"
 
-# -----------------------------
-# FOOTER
-# -----------------------------
-st.markdown("""
-<div class="footer">
-    OMAC Developers by S M Baqir
-</div>
-""", unsafe_allow_html=True)
+        st.download_button(
+            "Download HTML Report",
+            data=html_content,
+            file_name="runchart_report.html",
+            mime="text/html"
+        )
+
+else:
+    st.info("Upload Excel file to generate report")

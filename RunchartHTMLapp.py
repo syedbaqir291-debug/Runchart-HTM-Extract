@@ -1,5 +1,5 @@
 # runcharts_streamlit_premium.py
-# FIXED VERSION + TARGET LINE ADDED (NO LOGIC CHANGE)
+# FIXED VERSION + TARGET LINE ADDED + AUTO DETECT COLUMNS
 
 import streamlit as st
 import pandas as pd
@@ -14,6 +14,18 @@ NUM_POINTS = 18
 SHIFT_MIN_RUN = 6
 TREND_MIN_RUN = 5
 ASTRO_THRESHOLD = 0.1
+
+# ---------------------------
+# AUTO DETECT (NEW ONLY)
+# ---------------------------
+def auto_detect_column(columns, keywords):
+    cols_lower = {c: c.lower() for c in columns}
+
+    for c, cl in cols_lower.items():
+        for k in keywords:
+            if k in cl:
+                return c
+    return None
 
 # ---------------------------
 # CLEANING
@@ -150,7 +162,7 @@ def detect_astro(series, labels):
 # ---------------------------
 # APP
 # ---------------------------
-st.title("RunChart Dashboard (Target Line Added)")
+st.title("RunChart Dashboard (Auto Detect Columns)")
 
 file = st.file_uploader("Upload Excel")
 
@@ -158,9 +170,30 @@ if file:
 
     df = pd.read_excel(file)
 
-    dept_col = st.selectbox("Department Column", df.columns)
-    ind_col = st.selectbox("Indicator Column", df.columns)
-    target_col = st.selectbox("Target Column (NEW)", df.columns)
+    # ---------------------------
+    # AUTO DETECTION
+    # ---------------------------
+    dept_auto = auto_detect_column(df.columns, ["department", "dept"])
+    ind_auto = auto_detect_column(df.columns, ["indicator", "kpi", "metric"])
+    target_auto = auto_detect_column(df.columns, ["target", "goal", "benchmark"])
+
+    dept_col = st.selectbox(
+        "Department Column",
+        df.columns,
+        index=list(df.columns).index(dept_auto) if dept_auto in df.columns else 0
+    )
+
+    ind_col = st.selectbox(
+        "Indicator Column",
+        df.columns,
+        index=list(df.columns).index(ind_auto) if ind_auto in df.columns else 0
+    )
+
+    target_col = st.selectbox(
+        "Target Column (NEW)",
+        df.columns,
+        index=list(df.columns).index(target_auto) if target_auto in df.columns else 0
+    )
 
     df["_dept"] = df[dept_col].astype(str).apply(clean_text_for_match)
 
@@ -182,7 +215,7 @@ if file:
     target = parse_target(row[target_col])
 
     # ---------------------------
-    # 🔥 FIX ONLY HERE (DISPLAY SCALE)
+    # DISPLAY SCALE FIX ONLY
     # ---------------------------
     plot_series = [v * 100 if pd.notna(v) else np.nan for v in series]
     plot_median = median * 100 if pd.notna(median) else np.nan
@@ -208,7 +241,7 @@ if file:
     st.plotly_chart(fig, use_container_width=True)
 
     # ---------------------------
-    # ANALYSIS (UNCHANGED LOGIC)
+    # ANALYSIS
     # ---------------------------
     st.markdown("### Analysis")
 

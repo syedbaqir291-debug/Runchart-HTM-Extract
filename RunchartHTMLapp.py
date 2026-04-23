@@ -144,7 +144,7 @@ def detect_astro(series, labels):
 # STREAMLIT APP
 # ---------------------------
 st.set_page_config(layout="wide")
-st.title("📊 RunCharts Dashboard (FULL FIXED LOGIC)")
+st.title("📊 RunCharts Dashboard QPSD SKMCH&RC")
 
 file = st.file_uploader("Upload Excel")
 

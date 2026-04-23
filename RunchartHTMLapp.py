@@ -44,7 +44,7 @@ PREMIUM_LOGIN = "Pakistan@1947"
 PREMIUM_PASSWORD = "Pakistan@1947"
 
 # ---------------------------
-# STATE FIX (IMPORTANT)
+# STATE FIX
 # ---------------------------
 if "dept_col" not in st.session_state:
     st.session_state.dept_col = None
@@ -53,7 +53,7 @@ if "ind_col" not in st.session_state:
     st.session_state.ind_col = None
 
 # ---------------------------
-# CLEAN FUNCTIONS (UNCHANGED)
+# CLEAN FUNCTIONS
 # ---------------------------
 def clean_text_for_match(val):
     if pd.isna(val):
@@ -80,7 +80,7 @@ def get_center_line(values, method="median"):
     return float(np.nanmedian(arr)) if method == "median" else float(np.nanmean(arr))
 
 # ---------------------------
-# DETECTION LOGIC (UNCHANGED)
+# DETECTION LOGIC
 # ---------------------------
 def detect_shift(series, center, min_run=6):
     signs = []
@@ -139,33 +139,32 @@ def detect_astronomical(series, median_val, threshold=10):
     return ast
 
 # ---------------------------
-# PPTX GENERATION (UNCHANGED)
+# FORMATTER (FIXED OUTPUT LAYER)
 # ---------------------------
-def create_presentation_for_department(slide_infos, dept_display_name):
-    prs = Presentation()
+def format_analysis(labels, series, center, shifts, trends, astro):
+    output = []
 
-    for info in slide_infos:
-        slide = prs.slides.add_slide(prs.slide_layouts[6])
+    # Median
+    if pd.isna(center):
+        output.append("Median = N/A")
+    else:
+        output.append(f"Median = {round(center,1)}")
 
-        title = slide.shapes.add_textbox(Inches(0.6), Inches(0.3), Inches(9), Inches(0.6))
-        title.text_frame.text = info["indicator_name"]
+    # SHIFT
+    for s in shifts:
+        direction = "above" if s[2] == 1 else "below"
+        output.append(f"SHIFT ({direction}) from {labels[s[0]]} to {labels[s[1]]}")
 
-        labels = info["labels"]
-        series = info["series"]
+    # TREND
+    for t in trends:
+        direction = "increasing" if t[2] == 1 else "decreasing"
+        output.append(f"TREND ({direction}) from {labels[t[0]]} to {labels[t[1]]}")
 
-        chart_data = CategoryChartData()
-        chart_data.categories = labels
-        chart_data.add_series("Value", series)
+    # ASTRO
+    for a in astro:
+        val = series[a]
+        output.append(f"Astronomical point at {labels[a]} (value={round(val,2)})")
 
-        slide.shapes.add_chart(
-            XL_CHART_TYPE.LINE_MARKERS,
-            Inches(0.6), Inches(1.2), Inches(9), Inches(4),
-            chart_data
-        )
-
-    output = io.BytesIO()
-    prs.save(output)
-    output.seek(0)
     return output
 
 # ---------------------------
@@ -262,10 +261,7 @@ elif st.session_state.page == "chart":
 
     labels = list(df.columns[2:])
 
-    series = [
-        pd.to_numeric(row[c], errors="coerce")
-        for c in labels
-    ]
+    series = [pd.to_numeric(row[c], errors="coerce") for c in labels]
 
     clean_series = [np.nan if pd.isna(v) else v for v in series]
 
@@ -281,13 +277,9 @@ elif st.session_state.page == "chart":
     )
 
     # ---------------------------
-    # FIXED ANALYSIS DISPLAY
+    # ANALYSIS (FIXED FORMAT OUTPUT)
     # ---------------------------
-    st.markdown("### 📌 Analysis")
-
-    valid = [v for v in clean_series if pd.notna(v)]
-
-    st.write("Valid Points:", len(valid))
+    st.markdown("### 📌 Analysis Summary")
 
     raw_series = [pd.to_numeric(row[c], errors="coerce") for c in labels]
 
@@ -296,14 +288,10 @@ elif st.session_state.page == "chart":
     trends = detect_trend(raw_series)
     astro = detect_astronomical(raw_series, center)
 
-    if shifts:
-        st.write("SHIFT:", shifts)
+    formatted = format_analysis(labels, raw_series, center, shifts, trends, astro)
 
-    if trends:
-        st.write("TREND:", trends)
-
-    if astro:
-        st.write("ASTRO:", astro)
+    for line in formatted:
+        st.write(line)
 
     if not shifts and not trends and not astro:
         st.success("No variation detected")

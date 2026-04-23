@@ -1,5 +1,5 @@
 # runcharts_streamlit_premium.py
-# FIX ONLY SHIFT & TREND ACCORDING TO ORIGINAL LOGIC
+# FULL FIXED VERSION (SHIFT + TREND + ASTRO RESTORED CORRECTLY)
 
 import streamlit as st
 import pandas as pd
@@ -11,11 +11,12 @@ import re
 # CONFIG (UNCHANGED)
 # ---------------------------
 NUM_POINTS = 18
-SHIFT_MIN_RUN = 6   # ✅ ORIGINAL RULE RESTORED
-TREND_MIN_RUN = 5   # ✅ ORIGINAL RULE RESTORED
+SHIFT_MIN_RUN = 6
+TREND_MIN_RUN = 5
+ASTRO_THRESHOLD = 0.1  # for normalized values
 
 # ---------------------------
-# CLEAN
+# CLEANING
 # ---------------------------
 def clean_text_for_match(val):
     if pd.isna(val):
@@ -32,7 +33,7 @@ def to_float(v):
     try:
         if pd.isna(v):
             return np.nan
-        return float(str(v).replace("%",""))
+        return float(str(v).replace("%", "").strip())
     except:
         return np.nan
 
@@ -46,14 +47,13 @@ def get_center_line(values):
     return np.nanmedian(arr)
 
 # ---------------------------
-# SHIFT (FIXED ORIGINAL LOGIC)
+# SHIFT (CORRECT ORIGINAL RULE)
 # ---------------------------
 def detect_shift(series, center, labels):
     shifts = []
     i = 0
-    n = len(series)
 
-    while i < n:
+    while i < len(series):
         if pd.isna(series[i]):
             i += 1
             continue
@@ -63,9 +63,10 @@ def detect_shift(series, center, labels):
         count = 1
         j = i + 1
 
-        while j < n:
+        while j < len(series):
             if pd.isna(series[j]):
                 break
+
             if (series[j] > center and direction == 1) or (series[j] < center and direction == -1):
                 count += 1
                 j += 1
@@ -82,24 +83,19 @@ def detect_shift(series, center, labels):
     return shifts
 
 # ---------------------------
-# TREND (FIXED ORIGINAL LOGIC)
+# TREND (CORRECT ORIGINAL RULE)
 # ---------------------------
 def detect_trend(series, labels):
     trends = []
     i = 0
-    n = len(series)
 
-    while i < n - 1:
-        if pd.isna(series[i]):
+    while i < len(series) - 1:
+        if pd.isna(series[i]) or pd.isna(series[i+1]):
             i += 1
             continue
 
-        direction = None
-        if series[i+1] > series[i]:
-            direction = 1
-        elif series[i+1] < series[i]:
-            direction = -1
-        else:
+        direction = 1 if series[i+1] > series[i] else -1 if series[i+1] < series[i] else 0
+        if direction == 0:
             i += 1
             continue
 
@@ -107,18 +103,18 @@ def detect_trend(series, labels):
         count = 2
         j = i + 2
 
-        while j < n:
+        while j < len(series):
             if pd.isna(series[j]):
                 break
 
             if direction == 1 and series[j] > series[j-1]:
                 count += 1
-                j += 1
             elif direction == -1 and series[j] < series[j-1]:
                 count += 1
-                j += 1
             else:
                 break
+
+            j += 1
 
         if count >= TREND_MIN_RUN:
             trends.append(
@@ -130,26 +126,30 @@ def detect_trend(series, labels):
     return trends
 
 # ---------------------------
-# ASTRO (UNCHANGED)
+# ASTRO (RESTORED PROPERLY)
 # ---------------------------
 def detect_astro(series, labels):
     astro = []
+
     for i in range(1, len(series)):
         if pd.notna(series[i]) and pd.notna(series[i-1]):
-            if abs(series[i] - series[i-1]) >= 0.1:
+            if abs(series[i] - series[i-1]) >= ASTRO_THRESHOLD:
                 astro.append(
                     f"Astronomical point at {labels[i]} (value={round(series[i]*100,1)}%)"
                 )
+
     return astro
 
 # ---------------------------
-# STREAMLIT
+# STREAMLIT APP
 # ---------------------------
-st.title("RunChart Dashboard (Fixed Logic Only)")
+st.set_page_config(layout="wide")
+st.title("📊 RunCharts Dashboard (FULL FIXED LOGIC)")
 
 file = st.file_uploader("Upload Excel")
 
 if file:
+
     df = pd.read_excel(file)
 
     dept_col = st.selectbox("Department Column", df.columns)
@@ -170,15 +170,16 @@ if file:
     labels = [pretty_label(c) for c in cols]
     series = [to_float(row[c]) for c in cols]
 
-    median = get_center_line(series)
-
     # LIMIT 18 ONLY
     labels = labels[-NUM_POINTS:]
     series = series[-NUM_POINTS:]
 
+    median = get_center_line(series)
+
+    # DISPLAY
     st.subheader(indicator)
 
-    st.write("Median =", f"{round(median*100,1)}%")
+    st.write("Median =", f"{round(median*100,1)}%" if not np.isnan(median) else "N/A")
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=labels, y=series, mode="lines+markers"))
@@ -187,19 +188,28 @@ if file:
     st.plotly_chart(fig, use_container_width=True)
 
     # ---------------------------
-    # ANALYSIS (FIXED)
+    # ANALYSIS OUTPUT (FIXED)
     # ---------------------------
-    st.markdown("### Analysis")
+    st.markdown("### 📌 Analysis Summary")
 
     shifts = detect_shift(series, median, labels)
     trends = detect_trend(series, labels)
     astro = detect_astro(series, labels)
 
-    for s in shifts:
-        st.write(s)
+    if shifts:
+        st.markdown("**SHIFT:**")
+        for s in shifts:
+            st.write(s)
 
-    for t in trends:
-        st.write(t)
+    if trends:
+        st.markdown("**TREND:**")
+        for t in trends:
+            st.write(t)
 
-    for a in astro:
-        st.write(a)
+    if astro:
+        st.markdown("**ASTRONOMICAL POINTS:**")
+        for a in astro:
+            st.write(a)
+
+    if not shifts and not trends and not astro:
+        st.success("No Shift, Trend or Astronomical variation detected")

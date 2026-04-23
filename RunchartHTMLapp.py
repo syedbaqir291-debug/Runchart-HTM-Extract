@@ -320,15 +320,21 @@ elif st.session_state.page == "chart":
     row = df.iloc[st.session_state.selected_indicator]
 
     labels = list(df.columns[2:])
-    series = [pd.to_numeric(row[c], errors="coerce") for c in labels]
+    series = [
+        None if pd.isna(pd.to_numeric(row[c], errors="coerce"))
+        else float(pd.to_numeric(row[c], errors="coerce"))
+        for c in labels
+    ]
 
     median = np.nanmedian(series)
 
-    st.subheader(row.iloc[1])
+    indicator_name = row[st.session_state.ind_col]
+    st.subheader(indicator_name if pd.notna(indicator_name) else "Indicator")
 
     st.plotly_chart(plot_chart(labels, series, median), use_container_width=True)
 
-    st.write("Analysis:", series)
+    st.write("Analysis Summary (cleaned):")
+    st.write([round(x, 2) if pd.notna(x) else None for x in series])
 
     if st.button("⬅ Back"):
         st.session_state.page = "indicators"

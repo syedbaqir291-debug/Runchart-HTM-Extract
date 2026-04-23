@@ -234,7 +234,7 @@ if "df" not in st.session_state:
     st.session_state.df = None
 
 # ---------------------------
-# PAGE 1 - UPLOAD
+# PAGE 1 - UPLOAD (ONLY ADDITION - NO LOGIC CHANGE)
 # ---------------------------
 if st.session_state.page == "upload":
 
@@ -246,7 +246,19 @@ if st.session_state.page == "upload":
 
         st.success("File Loaded")
 
-        if st.button("Go to Dashboard"):
+        # ---------------------------
+        # NEW REQUIRED COLUMN SELECTION (ADDED ONLY)
+        # ---------------------------
+        st.markdown("### ⚠️ Step Required Before Proceeding")
+
+        dept_col = st.selectbox("Select Department Column", df.columns)
+        ind_col = st.selectbox("Select Indicator Column", df.columns)
+
+        if st.button("Confirm & Continue"):
+
+            st.session_state.dept_col = dept_col
+            st.session_state.ind_col = ind_col
+
             st.session_state.page = "dashboard"
             st.rerun()
 
@@ -289,7 +301,7 @@ elif st.session_state.page == "indicators":
     st.subheader(f"Indicators - {dept}")
 
     for i, row in df.iterrows():
-        if st.button(str(row.iloc[1])):
+        if st.button(str(row[st.session_state.ind_col])):
 
             st.session_state.selected_indicator = i
             st.session_state.page = "chart"

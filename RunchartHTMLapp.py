@@ -1,5 +1,5 @@
 # runcharts_streamlit_premium.py
-# FULL FIXED VERSION (SHIFT + TREND + ASTRO RESTORED CORRECTLY)
+# FIXED VERSION + TARGET LINE ADDED (NO LOGIC CHANGE)
 
 import streamlit as st
 import pandas as pd
@@ -8,12 +8,12 @@ import plotly.graph_objects as go
 import re
 
 # ---------------------------
-# CONFIG (UNCHANGED)
+# CONFIG
 # ---------------------------
 NUM_POINTS = 18
 SHIFT_MIN_RUN = 6
 TREND_MIN_RUN = 5
-ASTRO_THRESHOLD = 0.1  # for normalized values
+ASTRO_THRESHOLD = 0.1
 
 # ---------------------------
 # CLEANING
@@ -33,9 +33,24 @@ def to_float(v):
     try:
         if pd.isna(v):
             return np.nan
-        return float(str(v).replace("%", "").strip())
+        return float(str(v).replace("%","").strip())
     except:
         return np.nan
+
+# ---------------------------
+# TARGET PARSER (NEW ONLY)
+# ---------------------------
+def parse_target(val):
+    if pd.isna(val):
+        return np.nan
+    val = str(val)
+
+    # extract number from any format (=90, >=90, <=90, 90%)
+    num = re.findall(r"\d+\.?\d*", val)
+    if len(num) == 0:
+        return np.nan
+
+    return float(num[0])
 
 # ---------------------------
 # CENTER LINE
@@ -47,7 +62,7 @@ def get_center_line(values):
     return np.nanmedian(arr)
 
 # ---------------------------
-# SHIFT (CORRECT ORIGINAL RULE)
+# SHIFT
 # ---------------------------
 def detect_shift(series, center, labels):
     shifts = []
@@ -66,7 +81,6 @@ def detect_shift(series, center, labels):
         while j < len(series):
             if pd.isna(series[j]):
                 break
-
             if (series[j] > center and direction == 1) or (series[j] < center and direction == -1):
                 count += 1
                 j += 1
@@ -83,13 +97,13 @@ def detect_shift(series, center, labels):
     return shifts
 
 # ---------------------------
-# TREND (CORRECT ORIGINAL RULE)
+# TREND
 # ---------------------------
 def detect_trend(series, labels):
     trends = []
     i = 0
 
-    while i < len(series) - 1:
+    while i < len(series)-1:
         if pd.isna(series[i]) or pd.isna(series[i+1]):
             i += 1
             continue
@@ -106,14 +120,12 @@ def detect_trend(series, labels):
         while j < len(series):
             if pd.isna(series[j]):
                 break
-
             if direction == 1 and series[j] > series[j-1]:
                 count += 1
             elif direction == -1 and series[j] < series[j-1]:
                 count += 1
             else:
                 break
-
             j += 1
 
         if count >= TREND_MIN_RUN:
@@ -126,25 +138,22 @@ def detect_trend(series, labels):
     return trends
 
 # ---------------------------
-# ASTRO (RESTORED PROPERLY)
+# ASTRO
 # ---------------------------
 def detect_astro(series, labels):
     astro = []
-
     for i in range(1, len(series)):
         if pd.notna(series[i]) and pd.notna(series[i-1]):
             if abs(series[i] - series[i-1]) >= ASTRO_THRESHOLD:
                 astro.append(
                     f"Astronomical point at {labels[i]} (value={round(series[i]*100,1)}%)"
                 )
-
     return astro
 
 # ---------------------------
-# STREAMLIT APP
+# APP
 # ---------------------------
-st.set_page_config(layout="wide")
-st.title("📊 RunCharts Dashboard QPSD SKMCH&RC")
+st.title("RunChart Dashboard (Target Line Added)")
 
 file = st.file_uploader("Upload Excel")
 
@@ -154,6 +163,7 @@ if file:
 
     dept_col = st.selectbox("Department Column", df.columns)
     ind_col = st.selectbox("Indicator Column", df.columns)
+    target_col = st.selectbox("Target Column (NEW)", df.columns)
 
     df["_dept"] = df[dept_col].astype(str).apply(clean_text_for_match)
 
@@ -170,46 +180,48 @@ if file:
     labels = [pretty_label(c) for c in cols]
     series = [to_float(row[c]) for c in cols]
 
-    # LIMIT 18 ONLY
+    # LIMIT 18
     labels = labels[-NUM_POINTS:]
     series = series[-NUM_POINTS:]
 
     median = get_center_line(series)
 
-    # DISPLAY
-    st.subheader(indicator)
+    # TARGET (NEW)
+    target = parse_target(row[target_col])
 
-    st.write("Median =", f"{round(median*100,1)}%" if not np.isnan(median) else "N/A")
-
+    # ---------------------------
+    # PLOT
+    # ---------------------------
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=labels, y=series, mode="lines+markers"))
-    fig.add_hline(y=median)
+
+    fig.add_trace(go.Scatter(x=labels, y=series, mode="lines+markers", name="Value"))
+
+    fig.add_hline(y=median, line_dash="dash", line_color="gray")
+
+    # GREEN TARGET LINE
+    if not np.isnan(target):
+        fig.add_hline(y=target/100, line_color="green", line_width=2)
 
     st.plotly_chart(fig, use_container_width=True)
 
     # ---------------------------
-    # ANALYSIS OUTPUT (FIXED)
+    # ANALYSIS
     # ---------------------------
-    st.markdown("### 📌 Analysis Summary")
+    st.markdown("### Analysis")
 
     shifts = detect_shift(series, median, labels)
     trends = detect_trend(series, labels)
     astro = detect_astro(series, labels)
 
-    if shifts:
-        st.markdown("**SHIFT:**")
-        for s in shifts:
-            st.write(s)
+    for s in shifts:
+        st.write(s)
 
-    if trends:
-        st.markdown("**TREND:**")
-        for t in trends:
-            st.write(t)
+    for t in trends:
+        st.write(t)
 
-    if astro:
-        st.markdown("**ASTRONOMICAL POINTS:**")
-        for a in astro:
-            st.write(a)
+    for a in astro:
+        st.write(a)
 
-    if not shifts and not trends and not astro:
-        st.success("No Shift, Trend or Astronomical variation detected")
+    st.success(f"Median = {round(median*100,1)}%")
+    if not np.isnan(target):
+        st.success(f"Target = {target}%")

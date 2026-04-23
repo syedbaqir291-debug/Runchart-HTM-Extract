@@ -150,7 +150,7 @@ def detect_astro(series, labels):
 # ---------------------------
 # APP
 # ---------------------------
-st.title("RunChart Dashboard (Target Line Added)")
+st.title("RunChart Dashboard (QPSD - SKMCH&RC)")
 
 file = st.file_uploader("Upload Excel")
 

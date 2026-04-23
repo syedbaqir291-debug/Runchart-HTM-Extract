@@ -44,6 +44,15 @@ PREMIUM_LOGIN = "Pakistan@1947"
 PREMIUM_PASSWORD = "Pakistan@1947"
 
 # ---------------------------
+# STATE FIX (IMPORTANT)
+# ---------------------------
+if "dept_col" not in st.session_state:
+    st.session_state.dept_col = None
+
+if "ind_col" not in st.session_state:
+    st.session_state.ind_col = None
+
+# ---------------------------
 # CLEAN FUNCTIONS (UNCHANGED)
 # ---------------------------
 def clean_text_for_match(val):
@@ -130,7 +139,7 @@ def detect_astronomical(series, median_val, threshold=10):
     return ast
 
 # ---------------------------
-# PPTX GENERATION (UNCHANGED CORE)
+# PPTX GENERATION (UNCHANGED)
 # ---------------------------
 def create_presentation_for_department(slide_infos, dept_display_name):
     prs = Presentation()
@@ -148,11 +157,11 @@ def create_presentation_for_department(slide_infos, dept_display_name):
         chart_data.categories = labels
         chart_data.add_series("Value", series)
 
-        chart = slide.shapes.add_chart(
+        slide.shapes.add_chart(
             XL_CHART_TYPE.LINE_MARKERS,
             Inches(0.6), Inches(1.2), Inches(9), Inches(4),
             chart_data
-        ).chart
+        )
 
     output = io.BytesIO()
     prs.save(output)
@@ -160,69 +169,7 @@ def create_presentation_for_department(slide_infos, dept_display_name):
     return output
 
 # ---------------------------
-# LOGIC ENGINE
-# ---------------------------
-def build_analysis(df, dept_col, ind_col, data_cols, dept_clean):
-    slide_infos = []
-
-    df_dept = df[df["_dept_clean"] == dept_clean]
-
-    for _, row in df_dept.iterrows():
-
-        series = []
-        labels = []
-
-        for c in data_cols:
-            labels.append(pretty_label(c))
-            val = pd.to_numeric(row.get(c, np.nan), errors="coerce")
-            series.append(val)
-
-        center = get_center_line(series)
-
-        shifts = detect_shift(series, center)
-        trends = detect_trend(series)
-        astro = detect_astronomical(series, center)
-
-        imp = []
-
-        for s in shifts:
-            imp.append(f"SHIFT {s}")
-
-        for t in trends:
-            imp.append(f"TREND {t}")
-
-        for a in astro:
-            imp.append(f"ASTRO {a}")
-
-        slide_infos.append({
-            "indicator_name": str(row[ind_col]),
-            "labels": labels,
-            "series": series,
-            "analysis": imp
-        })
-
-    return slide_infos
-
-# ---------------------------
-# PLOTLY CHART (NEW)
-# ---------------------------
-def plot_chart(labels, series, median):
-    fig = go.Figure()
-
-    fig.add_trace(go.Scatter(
-        x=labels,
-        y=series,
-        mode="lines+markers",
-        name="Value"
-    ))
-
-    fig.add_hline(y=median, line_dash="dash", line_color="gray")
-
-    fig.update_layout(height=450, template="simple_white")
-    return fig
-
-# ---------------------------
-# STREAMLIT UI STATE
+# STREAMLIT APP
 # ---------------------------
 st.set_page_config(layout="wide")
 st.title("📊 RunCharts Premium Dashboard")
@@ -234,7 +181,7 @@ if "df" not in st.session_state:
     st.session_state.df = None
 
 # ---------------------------
-# PAGE 1 - UPLOAD (ONLY ADDITION - NO LOGIC CHANGE)
+# PAGE 1 - UPLOAD
 # ---------------------------
 if st.session_state.page == "upload":
 
@@ -246,31 +193,26 @@ if st.session_state.page == "upload":
 
         st.success("File Loaded")
 
-        # ---------------------------
-        # NEW REQUIRED COLUMN SELECTION (ADDED ONLY)
-        # ---------------------------
-        st.markdown("### ⚠️ Step Required Before Proceeding")
+        st.markdown("### ⚠️ Step Required")
 
         dept_col = st.selectbox("Select Department Column", df.columns)
         ind_col = st.selectbox("Select Indicator Column", df.columns)
 
         if st.button("Confirm & Continue"):
-
             st.session_state.dept_col = dept_col
             st.session_state.ind_col = ind_col
-
             st.session_state.page = "dashboard"
             st.rerun()
 
 # ---------------------------
-# PAGE 2 - DASHBOARD (DEPARTMENTS)
+# PAGE 2 - DASHBOARD
 # ---------------------------
 elif st.session_state.page == "dashboard":
 
     df = st.session_state.df
 
-    dept_col = st.selectbox("Department Column", df.columns)
-    ind_col = st.selectbox("Indicator Column", df.columns)
+    dept_col = st.session_state.dept_col
+    ind_col = st.session_state.ind_col
 
     df["_dept_clean"] = df[dept_col].astype(str).apply(clean_text_for_match)
 
@@ -302,7 +244,6 @@ elif st.session_state.page == "indicators":
 
     for i, row in df.iterrows():
         if st.button(str(row[st.session_state.ind_col])):
-
             st.session_state.selected_indicator = i
             st.session_state.page = "chart"
             st.rerun()
@@ -320,26 +261,52 @@ elif st.session_state.page == "chart":
     row = df.iloc[st.session_state.selected_indicator]
 
     labels = list(df.columns[2:])
+
     series = [
-        None if pd.isna(pd.to_numeric(row[c], errors="coerce"))
-        else float(pd.to_numeric(row[c], errors="coerce"))
+        pd.to_numeric(row[c], errors="coerce")
         for c in labels
     ]
 
-    clean_series = [
-        np.nan if (v is None or (isinstance(v, float) and np.isnan(v))) else v
-        for v in series
-    ]
+    clean_series = [np.nan if pd.isna(v) else v for v in series]
 
     median = np.nanmedian(clean_series)
 
-    indicator_name = row[st.session_state.ind_col]
-    st.subheader(indicator_name if pd.notna(indicator_name) else "Indicator")
+    st.subheader(row[st.session_state.ind_col])
 
-    st.plotly_chart(plot_chart(labels, series, median), use_container_width=True)
+    st.plotly_chart(
+        go.Figure().add_trace(
+            go.Scatter(x=labels, y=series, mode="lines+markers")
+        ).add_hline(y=median),
+        use_container_width=True
+    )
 
-    st.write("Analysis Summary (cleaned):")
-    st.write([round(x, 2) if pd.notna(x) else None for x in series])
+    # ---------------------------
+    # FIXED ANALYSIS DISPLAY
+    # ---------------------------
+    st.markdown("### 📌 Analysis")
+
+    valid = [v for v in clean_series if pd.notna(v)]
+
+    st.write("Valid Points:", len(valid))
+
+    raw_series = [pd.to_numeric(row[c], errors="coerce") for c in labels]
+
+    center = get_center_line(raw_series)
+    shifts = detect_shift(raw_series, center)
+    trends = detect_trend(raw_series)
+    astro = detect_astronomical(raw_series, center)
+
+    if shifts:
+        st.write("SHIFT:", shifts)
+
+    if trends:
+        st.write("TREND:", trends)
+
+    if astro:
+        st.write("ASTRO:", astro)
+
+    if not shifts and not trends and not astro:
+        st.success("No variation detected")
 
     if st.button("⬅ Back"):
         st.session_state.page = "indicators"

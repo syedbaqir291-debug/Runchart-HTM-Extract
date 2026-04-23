@@ -326,7 +326,12 @@ elif st.session_state.page == "chart":
         for c in labels
     ]
 
-    median = np.nanmedian(series)
+    clean_series = [
+        np.nan if (v is None or (isinstance(v, float) and np.isnan(v))) else v
+        for v in series
+    ]
+
+    median = np.nanmedian(clean_series)
 
     indicator_name = row[st.session_state.ind_col]
     st.subheader(indicator_name if pd.notna(indicator_name) else "Indicator")
